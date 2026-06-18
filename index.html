@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>משחקים</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 40px;
+      padding: 30px;
+    }
+    h1 { font-size: 2.5rem; color: #f0c040; letter-spacing: 4px; }
+    .games { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; }
+    .card {
+      background: #16213e;
+      border: 2px solid #0f3460;
+      border-radius: 16px;
+      padding: 40px 50px;
+      text-align: center;
+      text-decoration: none;
+      color: #eee;
+      font-size: 5rem;
+      transition: transform .2s, border-color .2s, box-shadow .2s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .card:hover {
+      transform: translateY(-6px);
+      border-color: #f0c040;
+      box-shadow: 0 8px 30px rgba(240,192,64,.25);
+    }
+    .card span { font-size: 1.1rem; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>🎮 משחקים</h1>
+  <div class="games">
+    <a class="card" href="chess.html">♟<span>שחמט</span></a>
+    <a class="card" href="sudoku.html">🔢<span>סודוקו</span></a>
+  </div>
+</body>
+</html>
