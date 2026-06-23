@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>שש בש</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#eee;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:20px;gap:12px}
+h1{font-size:2rem;color:#f0c040;letter-spacing:3px}
+#top-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:center}
+button{background:#0f3460;color:#eee;border:2px solid #1a4a80;border-radius:8px;padding:8px 18px;font-size:.95rem;cursor:pointer;transition:background .2s,border-color .2s}
+button:hover{background:#1a5090;border-color:#f0c040}
+button:disabled{opacity:.4;cursor:default}
+select{background:#0f3460;color:#eee;border:2px solid #1a4a80;border-radius:8px;padding:8px 12px;font-size:.95rem}
+#status{font-size:1.1rem;min-height:1.6em;color:#f0c040;text-align:center}
+#game-area{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;justify-content:center}
+#board-wrap{position:relative}
+canvas{border-radius:10px;cursor:pointer;display:block}
+#dice-area{display:flex;flex-direction:column;align-items:center;gap:12px;min-width:120px}
+.dice-row{display:flex;gap:8px}
+.die{width:48px;height:48px;background:#f5f5f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#222;border:3px solid #ccc;font-weight:bold;transition:opacity .2s}
+.die.used{opacity:.3}
+#roll-btn{font-size:1rem;padding:10px 24px;background:#c0392b;border-color:#e74c3c}
+#roll-btn:hover{background:#e74c3c}
+#scores{display:flex;gap:24px;font-size:.95rem}
+.score-box{background:#16213e;border:2px solid #0f3460;border-radius:8px;padding:8px 16px;text-align:center}
+.score-box span{display:block;font-size:1.3rem;font-weight:bold;color:#f0c040}
+#msg-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);align-items:center;justify-content:center;z-index:100}
+#msg-box{background:#16213e;border:3px solid #f0c040;border-radius:16px;padding:40px 60px;text-align:center;font-size:1.4rem}
+#msg-box button{margin-top:20px;font-size:1rem;padding:10px 28px}
+a.back{color:#aaa;text-decoration:none;font-size:.9rem}
+a.back:hover{color:#f0c040}
+</style>
+</head>
+<body>
+<h1>🎲 שש בש</h1>
+<div id="top-bar">
+  <a class="back" href="index.html">← חזרה</a>
+  <select id="mode-sel">
+    <option value="pvp">שחקן נגד שחקן</option>
+    <option value="pvc">שחקן נגד מחשב</option>
+  </select>
+  <button id="new-btn">משחק חדש</button>
+</div>
+<div id="scores">
+  <div class="score-box">שחור<span id="sc-black">0</span></div>
+  <div class="score-box">אדום<span id="sc-red">0</span></div>
+</div>
+<div id="status">לחץ "משחק חדש" להתחלה</div>
+<div id="game-area">
+  <canvas id="c" width="700" height="500"></canvas>
+  <div id="dice-area">
+    <div class="dice-row" id="dice-display"></div>
+    <button id="roll-btn" disabled>הטל קוביות</button>
+    <div id="move-info" style="font-size:.85rem;color:#aaa;text-align:center;max-width:120px"></div>
+  </div>
+</div>
+<div id="msg-overlay">
+  <div id="msg-box">
+    <div id="msg-text"></div>
+    <button id="msg-btn">משחק חדש</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 700, H = 500;
+const COLS = 13; // 12 points each half + bar
+const POINT_W = 52;
+const BAR_W = 36;
+const BOARD_L = 20, BOARD_T = 20;
+const BOARD_W = W - 40, BOARD_H = H - 40;
+// Points layout: 12 bottom (left=13..18, right=19..24 for red's perspective)
+// We display: bottom row left=13-18, right=19-24; top row left=12-7, right=6-1
+// Standard: point 1 = bottom-right, point 24 = top-right (for black)
+
+// Colors
+const C_BOARD = '#2d5a1b';
+const C_FRAME = '#8B4513';
+const C_TRI_L = '#c0392b'; // red triangles
+const C_TRI_D = '#1a1a1a'; // dark triangles
+const C_BLACK = '#111';
+const C_RED = '#c0392b';
+const C_BLACK_BORDER = '#555';
+const C_RED_BORDER = '#ff6b6b';
+const C_BAR = '#5d3a1a';
+const C_SELECTED = '#f0c040';
+const C_VALID = 'rgba(240,192,64,0.45)';
+const C_HOME = '#1a3a0a';
+
+// Game state
+let board = []; // board[i] = {count, color:'black'|'red'} for i=1..24
+let bar = {black:0, red:0};
+let borneOff = {black:0, red:0};
+let dice = [];
+let diceLeft = [];
+let turn = 'black'; // black moves 24->1, red moves 1->24
+let selected = null; // point index or 'bar'
+let validMoves = [];
+let gameActive = false;
+let scores = {black:0, red:0};
+let mode = 'pvp';
+let phase = 'roll'; // 'roll' | 'move'
+let aiTimer = null;
+
+function initBoard() {
+  board = [];
+  for(let i=0;i<=25;i++) board[i]={count:0,color:null};
+  // Standard starting position
+  // Black: 24->1
+  set(24,'black',2); set(13,'black',5); set(8,'black',3); set(6,'black',5);
+  // Red: 1->24
+  set(1,'red',2); set(12,'red',5); set(17,'red',3); set(19,'red',5);
+  bar={black:0,red:0};
+  borneOff={black:0,red:0};
+}
+
+function set(p,color,n){board[p]={count:n,color};}
+
+function rollDice(){
+  const d1=Math.ceil(Math.random()*6);
+  const d2=Math.ceil(Math.random()*6);
+  dice=d1===d2?[d1,d1,d1,d1]:[d1,d2];
+  diceLeft=[...dice];
+}
+
+// Returns valid destinations for a checker at point p (or 'bar') for current turn
+function getValidDests(from) {
+  const color = turn;
+  const dir = color==='black'?-1:1;
+  const dests = new Set();
+
+  if(diceLeft.length===0) return [];
+
+  // If player has bar pieces, can only move from bar
+  if(bar[color]>0 && from!=='bar') return [];
+
+  const usedDice = new Set();
+  for(const d of diceLeft){
+    if(usedDice.has(d)) continue;
+    usedDice.add(d);
+    let to;
+    if(from==='bar'){
+      to = color==='black'?25-d:d;
+    } else {
+      to = from + dir*d;
+    }
+    if(to>=1&&to<=24){
+      const pt=board[to];
+      if(pt.count===0||pt.color===color||(pt.count===1&&pt.color!==color)){
+        dests.add(to);
+      }
+    } else if(canBearOff(color)){
+      // Bear off
+      const home = color==='black'?1:24;
+      const exact = color==='black'?from-d===0:from+d===25;
+      if(exact){
+        dests.add(color==='black'?0:25);
+      } else {
+        // Higher die allowed if no higher point occupied
+        const higher = color==='black'
+          ? diceLeft.some(dd=>dd>d && board[from-dd] && board[from-dd].color===color)
+          : diceLeft.some(dd=>dd>d && board[from+dd] && board[from+dd].color===color);
+        if(!higher && ((color==='black'&&to<1)||(color==='red'&&to>24))){
+          dests.add(color==='black'?0:25);
+        }
+      }
+    }
+  }
+  return [...dests];
+}
+
+function canBearOff(color){
+  if(bar[color]>0) return false;
+  if(color==='black'){
+    for(let p=7;p<=24;p++) if(board[p].count>0&&board[p].color==='black') return false;
+    return true;
+  } else {
+    for(let p=1;p<=18;p++) if(board[p].count>0&&board[p].color==='red') return false;
+    return true;
+  }
+}
+
+function applyMove(from, to){
+  const color=turn;
+  const opp=color==='black'?'red':'black';
+  const dir=color==='black'?-1:1;
+
+  // Determine die used
+  let dUsed;
+  if(from==='bar'){
+    dUsed=color==='black'?25-to:to;
+  } else if(to===0||to===25){
+    // bear off
+    const diff=Math.abs(from-(color==='black'?0:25));
+    // find smallest die >= diff that's available, or exact
+    const exact=diceLeft.find(d=>d===diff);
+    if(exact){dUsed=exact;}
+    else{dUsed=diceLeft.filter(d=>d>=diff).sort((a,b)=>a-b)[0];}
+  } else {
+    dUsed=Math.abs(to-from);
+  }
+
+  // Remove die
+  const idx=diceLeft.indexOf(dUsed);
+  if(idx>=0) diceLeft.splice(idx,1);
+
+  // Move checker
+  if(from==='bar'){
+    bar[color]--;
+  } else {
+    board[from].count--;
+    if(board[from].count===0) board[from].color=null;
+  }
+
+  if(to===0||to===25){
+    borneOff[color]++;
+  } else {
+    // Hit?
+    if(board[to].count===1&&board[to].color===opp){
+      board[to].count=0; board[to].color=null;
+      bar[opp]++;
+    }
+    if(board[to].count===0) board[to].color=color;
+    board[to].count++;
+  }
+}
+
+function hasAnyMove(color){
+  const savedTurn=turn;
+  turn=color;
+  const dir=color==='black'?-1:1;
+  let found=false;
+
+  if(bar[color]>0){
+    const dests=getValidDests('bar');
+    if(dests.length>0) found=true;
+  } else {
+    for(let p=1;p<=24&&!found;p++){
+      if(board[p].count>0&&board[p].color===color){
+        if(getValidDests(p).length>0) found=true;
+      }
+    }
+  }
+  turn=savedTurn;
+  return found;
+}
+
+function checkWin(){
+  if(borneOff.black===15){endGame('black');return true;}
+  if(borneOff.red===15){endGame('red');return true;}
+  return false;
+}
+
+function endGame(winner){
+  gameActive=false;
+  scores[winner]++;
+  document.getElementById('sc-black').textContent=scores.black;
+  document.getElementById('sc-red').textContent=scores.red;
+  const name=winner==='black'?'שחור':'אדום';
+  document.getElementById('msg-text').textContent=`🎉 ${name} ניצח!`;
+  document.getElementById('msg-overlay').style.display='flex';
+}
+
+function nextTurn(){
+  turn=turn==='black'?'red':'black';
+  phase='roll';
+  selected=null;
+  validMoves=[];
+  diceLeft=[];
+  dice=[];
+  updateStatus();
+  updateDiceDisplay();
+  document.getElementById('roll-btn').disabled=false;
+  drawBoard();
+
+  if(mode==='pvc'&&turn==='red'){
+    document.getElementById('roll-btn').disabled=true;
+    aiTimer=setTimeout(aiTurn,800);
+  }
+}
+
+function aiTurn(){
+  rollDice();
+  updateDiceDisplay();
+  setStatus(`מחשב (אדום) הטיל: ${dice.join(', ')}`);
+  drawBoard();
+  aiTimer=setTimeout(aiMove,700);
+}
+
+function aiMove(){
+  if(!gameActive) return;
+  // Simple greedy AI: prefer hitting, then advancing
+  let moved=false;
+  let safety=0;
+  while(diceLeft.length>0&&safety<20){
+    safety++;
+    const color='red';
+    const savedTurn=turn;
+    turn=color;
+    let bestFrom=null,bestTo=null,bestScore=-999;
+
+    const froms=[];
+    if(bar[color]>0){froms.push('bar');}
+    else{for(let p=1;p<=24;p++)if(board[p].count>0&&board[p].color===color)froms.push(p);}
+
+    for(const f of froms){
+      const dests=getValidDests(f);
+      for(const t of dests){
+        let score=0;
+        if(t>=1&&t<=24){
+          if(board[t].count===1&&board[t].color==='black') score+=10; // hit
+          score+=t; // advance
+          if(board[t].count>=1&&board[t].color==='red') score+=2; // stack
+        } else score+=20; // bear off
+        if(f==='bar') score+=15;
+        if(score>bestScore){bestScore=score;bestFrom=f;bestTo=t;}
+      }
+    }
+    turn=savedTurn;
+
+    if(bestFrom===null) break;
+    applyMove(bestFrom,bestTo);
+    moved=true;
+    if(checkWin()) return;
+  }
+  drawBoard();
+  updateDiceDisplay();
+  if(!moved||diceLeft.length===0){
+    setTimeout(()=>{nextTurn();},600);
+  }
+}
+
+// ---- Drawing ----
+function pointX(p){
+  // Points 1-6: bottom right quad; 7-12: bottom left; 13-18: top left; 19-24: top right
+  // On canvas (LTR internally for simplicity):
+  // Bottom: 1=far right, 12=far left; Top: 13=far left, 24=far right
+  // We'll map: col 0-5 = points 13-18 (top-left), col 7-12 = points 19-24 (top-right)
+  //            col 0-5 = points 12-7  (bot-left), col 7-12 = points 6-1  (bot-right)
+  // bar is at col 6
+  if(p>=13&&p<=18) return BOARD_L + (p-13)*POINT_W + POINT_W/2;
+  if(p>=19&&p<=24) return BOARD_L + (p-19+7)*POINT_W + BAR_W/2 + POINT_W/2;
+  if(p>=7&&p<=12)  return BOARD_L + (12-p)*POINT_W + POINT_W/2;
+  if(p>=1&&p<=6)   return BOARD_L + (6-p+7)*POINT_W + BAR_W/2 + POINT_W/2;
+  return W/2; // bar
+}
+
+function isTopRow(p){return p>=13&&p<=24;}
+
+function drawTriangle(x,top,color,idx){
+  const h=BOARD_H/2-20;
+  ctx.beginPath();
+  if(top){
+    ctx.moveTo(x-POINT_W/2+2,BOARD_T+2);
+    ctx.lineTo(x+POINT_W/2-2,BOARD_T+2);
+    ctx.lineTo(x,BOARD_T+h);
+  } else {
+    ctx.moveTo(x-POINT_W/2+2,BOARD_T+BOARD_H-2);
+    ctx.lineTo(x+POINT_W/2-2,BOARD_T+BOARD_H-2);
+    ctx.lineTo(x,BOARD_T+BOARD_H-h);
+  }
+  ctx.fillStyle=color;
+  ctx.fill();
+  // Point number
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.font='11px Arial';
+  ctx.textAlign='center';
+  ctx.fillText(idx,x,top?BOARD_T+14:BOARD_T+BOARD_H-6);
+}
+
+function drawChecker(x,y,color,n,highlight){
+  const r=POINT_W/2-4;
+  // Shadow
+  ctx.beginPath();
+  ctx.arc(x+1,y+1,r,0,Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,0.4)';
+  ctx.fill();
+  // Main
+  ctx.beginPath();
+  ctx.arc(x,y,r,0,Math.PI*2);
+  const grad=ctx.createRadialGradient(x-r*.3,y-r*.3,r*.1,x,y,r);
+  if(color==='black'){
+    grad.addColorStop(0,'#555');grad.addColorStop(1,'#111');
+  } else {
+    grad.addColorStop(0,'#e74c3c');grad.addColorStop(1,'#922b21');
+  }
+  ctx.fillStyle=grad;
+  ctx.fill();
+  ctx.lineWidth=2;
+  ctx.strokeStyle=color==='black'?C_BLACK_BORDER:C_RED_BORDER;
+  ctx.stroke();
+  if(highlight){
+    ctx.beginPath();ctx.arc(x,y,r+3,0,Math.PI*2);
+    ctx.strokeStyle=C_SELECTED;ctx.lineWidth=3;ctx.stroke();
+  }
+  if(n>1){
+    ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText(n,x,y+4);
+  }
+}
+
+function drawBoard(){
+  ctx.clearRect(0,0,W,H);
+  // Frame
+  ctx.fillStyle=C_FRAME;
+  ctx.fillRect(0,0,W,H);
+  // Board surface
+  ctx.fillStyle=C_BOARD;
+  ctx.fillRect(BOARD_L,BOARD_T,BOARD_W,BOARD_H);
+  // Home areas shading
+  ctx.fillStyle=C_HOME;
+  ctx.fillRect(BOARD_L+7*POINT_W+BAR_W,BOARD_T,6*POINT_W,BOARD_H);
+  // Bar
+  ctx.fillStyle=C_BAR;
+  const barX=BOARD_L+6*POINT_W;
+  ctx.fillRect(barX,BOARD_T,BAR_W,BOARD_H);
+  // Middle divider
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.fillRect(BOARD_L,BOARD_T+BOARD_H/2-3,BOARD_W,6);
+
+  // Triangles
+  for(let p=1;p<=24;p++){
+    const x=pointX(p);
+    const top=isTopRow(p);
+    const color=(p%2===0)?C_TRI_L:C_TRI_D;
+    drawTriangle(x,top,color,p);
+  }
+
+  // Valid move highlights
+  for(const v of validMoves){
+    if(v===0||v===25) continue;
+    const x=pointX(v);
+    const top=isTopRow(v);
+    ctx.beginPath();
+    if(top){
+      ctx.moveTo(x-POINT_W/2+2,BOARD_T+2);
+      ctx.lineTo(x+POINT_W/2-2,BOARD_T+2);
+      ctx.lineTo(x,BOARD_T+BOARD_H/2-30);
+    } else {
+      ctx.moveTo(x-POINT_W/2+2,BOARD_T+BOARD_H-2);
+      ctx.lineTo(x+POINT_W/2-2,BOARD_T+BOARD_H-2);
+      ctx.lineTo(x,BOARD_T+BOARD_H/2+30);
+    }
+    ctx.fillStyle=C_VALID;
+    ctx.fill();
+  }
+
+  // Bear-off highlight
+  if(validMoves.includes(0)){
+    ctx.fillStyle=C_VALID;
+    ctx.fillRect(BOARD_L+BOARD_W+2,BOARD_T+BOARD_H/2+10,16,BOARD_H/2-20);
+  }
+  if(validMoves.includes(25)){
+    ctx.fillStyle=C_VALID;
+    ctx.fillRect(BOARD_L+BOARD_W+2,BOARD_T+10,16,BOARD_H/2-20);
+  }
+
+  // Checkers on points
+  for(let p=1;p<=24;p++){
+    const pt=board[p];
+    if(pt.count===0) continue;
+    const x=pointX(p);
+    const top=isTopRow(p);
+    const step=Math.min(POINT_W-2,BOARD_H/2/Math.max(pt.count,5)*0.9);
+    for(let i=0;i<Math.min(pt.count,5);i++){
+      const y=top
+        ?BOARD_T+20+i*(POINT_W-4)+POINT_W/2-4
+        :BOARD_T+BOARD_H-20-i*(POINT_W-4)-POINT_W/2+4;
+      const hl=selected===p&&i===0&&pt.color===turn;
+      drawChecker(x,y,pt.color,i===0?pt.count:0,hl&&i===0);
+    }
+    if(pt.count>5){
+      const y2=top?BOARD_T+20+4*(POINT_W-4)+POINT_W/2-4+2:BOARD_T+BOARD_H-20-4*(POINT_W-4)-POINT_W/2+4-2;
+      ctx.fillStyle='#f0c040';ctx.font='bold 11px Arial';ctx.textAlign='center';
+      ctx.fillText('+'+pt.count,x,y2+14*(top?1:-1));
+    }
+  }
+
+  // Bar checkers
+  const bx=barX+BAR_W/2;
+  for(let i=0;i<Math.min(bar.black,4);i++){
+    const hl=selected==='bar'&&turn==='black';
+    drawChecker(bx,BOARD_T+BOARD_H/2+20+i*36,'black',i===0?bar.black:0,hl&&i===0);
+  }
+  for(let i=0;i<Math.min(bar.red,4);i++){
+    const hl=selected==='bar'&&turn==='red';
+    drawChecker(bx,BOARD_T+BOARD_H/2-20-i*36,'red',i===0?bar.red:0,hl&&i===0);
+  }
+
+  // Borne off display
+  ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillStyle='#eee';
+  ctx.fillText('⬇'+borneOff.black,BOARD_L+BOARD_W+16+8,BOARD_T+BOARD_H-10);
+  ctx.fillText('⬆'+borneOff.red,BOARD_L+BOARD_W+16+8,BOARD_T+20);
+
+  // Turn indicator arrows
+  ctx.fillStyle=turn==='black'?C_BLACK_BORDER:'#e74c3c';
+  ctx.font='bold 16px Arial';ctx.textAlign='left';
+  ctx.fillText(turn==='black'?'← שחור':'אדום →',BOARD_L+4,BOARD_T-6);
+}
+
+function setStatus(s){document.getElementById('status').textContent=s;}
+function updateStatus(){
+  if(!gameActive){setStatus('לחץ "משחק חדש" להתחלה');return;}
+  const name=turn==='black'?'שחור':'אדום';
+  if(phase==='roll') setStatus(`תור ${name} – הטל קוביות`);
+  else setStatus(`תור ${name} – בחר מהלך`);
+}
+
+function updateDiceDisplay(){
+  const el=document.getElementById('dice-display');
+  el.innerHTML='';
+  const faces=['','⚀','⚁','⚂','⚃','⚄','⚅'];
+  for(let i=0;i<dice.length;i++){
+    const d=document.createElement('div');
+    d.className='die'+(diceLeft.includes(dice[i])?'':' used');
+    // check by count
+    d.className='die';
+    d.textContent=faces[dice[i]];
+    el.appendChild(d);
+  }
+  // Mark used: compare counts
+  const remaining=[...diceLeft];
+  for(const d of el.children){
+    const v=dice[['⚀','⚁','⚂','⚃','⚄','⚅'].indexOf(d.textContent)+1];
+    // simpler: just re-render
+  }
+  // Re-render cleanly
+  el.innerHTML='';
+  const used=[...dice];
+  const left=[...diceLeft];
+  for(const d of used){
+    const div=document.createElement('div');
+    div.className='die';
+    div.textContent=faces[d];
+    const li=left.indexOf(d);
+    if(li<0) div.classList.add('used');
+    else left.splice(li,1);
+    el.appendChild(div);
+  }
+}
+
+// Click handling
+canvas.addEventListener('click',e=>{
+  if(!gameActive||phase!=='move') return;
+  if(mode==='pvc'&&turn==='red') return;
+  const rect=canvas.getBoundingClientRect();
+  const cx=(e.clientX-rect.left)*(W/rect.width);
+  const cy=(e.clientY-rect.top)*(H/rect.height);
+
+  // Check bear-off zones (right edge)
+  if(cx>BOARD_L+BOARD_W){
+    if(validMoves.includes(0)&&cy>BOARD_T+BOARD_H/2){
+      doMove(selected,0);return;
+    }
+    if(validMoves.includes(25)&&cy<BOARD_T+BOARD_H/2){
+      doMove(selected,25);return;
+    }
+  }
+
+  // Check bar click
+  const barX2=BOARD_L+6*POINT_W;
+  if(cx>=barX2&&cx<=barX2+BAR_W){
+    if(bar[turn]>0){
+      selected='bar';
+      validMoves=getValidDests('bar');
+      drawBoard();
+      document.getElementById('move-info').textContent=
+        validMoves.length===0?'אין מהלכים אפשריים':'';
+    }
+    return;
+  }
+
+  // Find point clicked
+  let clickedPt=null;
+  for(let p=1;p<=24;p++){
+    const px=pointX(p);
+    if(Math.abs(cx-px)<POINT_W/2+2){
+      const top=isTopRow(p);
+      if(top&&cy<BOARD_T+BOARD_H/2) {clickedPt=p;break;}
+      if(!top&&cy>BOARD_T+BOARD_H/2){clickedPt=p;break;}
+    }
+  }
+  if(clickedPt===null) return;
+
+  if(validMoves.includes(clickedPt)){
+    doMove(selected,clickedPt);
+    return;
+  }
+
+  // Select own checker
+  if(bar[turn]===0&&board[clickedPt].count>0&&board[clickedPt].color===turn){
+    selected=clickedPt;
+    validMoves=getValidDests(clickedPt);
+    drawBoard();
+    document.getElementById('move-info').textContent=
+      validMoves.length===0?'אין מהלכים אפשריים':'';
+  }
+});
+
+function doMove(from,to){
+  applyMove(from,to);
+  selected=null;
+  validMoves=[];
+  document.getElementById('move-info').textContent='';
+  if(checkWin()) return;
+  drawBoard();
+  updateDiceDisplay();
+
+  if(diceLeft.length===0||!hasAnyMove(turn)){
+    setTimeout(nextTurn,400);
+  } else {
+    // Auto-select bar if needed
+    if(bar[turn]>0){
+      selected='bar';
+      validMoves=getValidDests('bar');
+      if(validMoves.length===0){
+        document.getElementById('move-info').textContent='לא ניתן להיכנס – מעביר תור';
+        setTimeout(nextTurn,800);
+      }
+    }
+    updateStatus();
+    drawBoard();
+  }
+}
+
+document.getElementById('roll-btn').addEventListener('click',()=>{
+  if(!gameActive||phase!=='roll') return;
+  rollDice();
+  phase='move';
+  updateDiceDisplay();
+  document.getElementById('roll-btn').disabled=true;
+
+  const name=turn==='black'?'שחור':'אדום';
+  setStatus(`${name} הטיל: ${dice.join(', ')}`);
+
+  // Check if any move possible
+  if(!hasAnyMove(turn)){
+    setStatus(`${name} הטיל ${dice.join(', ')} – אין מהלכים, תור עובר`);
+    setTimeout(nextTurn,1200);
+    return;
+  }
+
+  // Auto-select bar
+  if(bar[turn]>0){
+    selected='bar';
+    validMoves=getValidDests('bar');
+  }
+  drawBoard();
+});
+
+function startGame(){
+  if(aiTimer){clearTimeout(aiTimer);aiTimer=null;}
+  mode=document.getElementById('mode-sel').value;
+  initBoard();
+  dice=[];diceLeft=[];selected=null;validMoves=[];
+  turn='black';phase='roll';gameActive=true;
+  document.getElementById('roll-btn').disabled=false;
+  document.getElementById('msg-overlay').style.display='none';
+  document.getElementById('move-info').textContent='';
+  updateDiceDisplay();
+  updateStatus();
+  drawBoard();
+}
+
+document.getElementById('new-btn').addEventListener('click',startGame);
+document.getElementById('msg-btn').addEventListener('click',startGame);
+
+// Initial draw
+drawBoard();
+setStatus('לחץ "משחק חדש" להתחלה');
+</script>
+</body>
+</html>
